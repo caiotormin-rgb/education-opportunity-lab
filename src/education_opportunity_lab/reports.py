@@ -24,6 +24,15 @@ OUTCOME_WEIGHTS: dict[str, float] = {
     "attendance_rate": 0.5,
 }
 
+# Spending values below this are treated as data errors (e.g. $10/student)
+MIN_SPENDING_PER_STUDENT: float = 2_000.0
+
+# Districts whose last data year lags the panel max by more than this are excluded
+DEFAULT_MAX_STALE_YEARS: int = 5
+
+# Recency weight half-life: efficiency halves every this many years of lag
+RECENCY_HALF_LIFE_YEARS: int = 3
+
 
 # ---------------------------------------------------------------------------
 # Core statistical helpers
@@ -41,6 +50,22 @@ def compute_linear_trend(pairs: list[tuple[int, float]]) -> float | None:
         return None
     ss_xy = sum((p[0] - x_mean) * (p[1] - y_mean) for p in pairs)
     return ss_xy / ss_xx
+
+
+def _panel_max_year(rows: list[dict[str, str]]) -> int | None:
+    """Return the most recent year present anywhere in the panel."""
+    years = [parse_int(r.get("year")) for r in rows]
+    valid = [y for y in years if y is not None]
+    return max(valid) if valid else None
+
+
+def _recency_weight(data_year: int, reference_year: int, half_life: int = RECENCY_HALF_LIFE_YEARS) -> float:
+    """Exponential decay weight relative to the panel's most recent year.
+
+    Returns 1.0 for current data, halving every `half_life` years of lag.
+    """
+    lag = max(0, reference_year - data_year)
+    return 0.5 ** (lag / half_life)
 
 
 def compute_outcome_composite(
@@ -93,12 +118,16 @@ def most_improved_districts(
     min_years: int = 3,
     top_n: int = 100,
     ascending: bool = False,
+    max_stale_years: int = DEFAULT_MAX_STALE_YEARS,
 ) -> list[dict[str, str]]:
     """Rank districts by OLS outcome-composite trend slope.
 
     ascending=False → most improved first (default).
     ascending=True  → most declined first (used by districts_in_decline).
+    Districts whose most recent outcome data lags the panel max year by more than
+    max_stale_years are excluded so outdated trends don't dominate the ranking.
     """
+    panel_max = _panel_max_year(rows)
     groups = _group_by_district(rows)
     scored: list[dict[str, str]] = []
 
@@ -114,6 +143,10 @@ def most_improved_districts(
             continue
 
         pairs.sort(key=lambda p: p[0])
+
+        if panel_max is not None and (panel_max - pairs[-1][0]) > max_stale_years:
+            continue
+
         slope = compute_linear_trend(pairs)
         if slope is None:
             continue
@@ -147,8 +180,19 @@ def most_improved_districts(
 def best_outcomes_per_dollar(
     rows: list[dict[str, str]],
     top_n: int = 100,
+    min_spending: float = MIN_SPENDING_PER_STUDENT,
+    max_stale_years: int = DEFAULT_MAX_STALE_YEARS,
 ) -> list[dict[str, str]]:
-    """Rank districts by outcome composite per $10k of spending (latest qualifying year)."""
+    """Rank districts by recency-adjusted outcome composite per $10k of spending.
+
+    Two guards against distortion:
+    - min_spending: rows with spending_per_student below this are treated as data
+      errors and excluded (catches $10/student anomalies).
+    - Recency weight: efficiency is multiplied by an exponential decay factor so
+      districts with stale data cannot outscore districts with current data.
+      Districts lagging the panel max by more than max_stale_years are dropped.
+    """
+    panel_max = _panel_max_year(rows)
     groups = _group_by_district(rows)
     scored: list[dict[str, str]] = []
 
@@ -156,18 +200,25 @@ def best_outcomes_per_dollar(
         qualified = [
             r for r in district_rows
             if compute_outcome_composite(r) is not None
-            and (parse_number(r.get("spending_per_student")) or 0) > 0
+            and (parse_number(r.get("spending_per_student")) or 0) >= min_spending
         ]
         if not qualified:
             continue
 
         row = max(qualified, key=lambda r: parse_int(r.get("year")) or 0)
-        outcome = compute_outcome_composite(row)
-        spending = parse_number(row.get("spending_per_student"))
-        if outcome is None or spending is None or spending <= 0:
+        data_year = parse_int(row.get("year"))
+
+        if panel_max is not None and data_year is not None and (panel_max - data_year) > max_stale_years:
             continue
 
-        efficiency = outcome / (spending / 10_000)
+        outcome = compute_outcome_composite(row)
+        spending = parse_number(row.get("spending_per_student"))
+        if outcome is None or spending is None or spending < min_spending:
+            continue
+
+        raw_efficiency = outcome / (spending / 10_000)
+        weight = _recency_weight(data_year, panel_max) if (data_year is not None and panel_max is not None) else 1.0
+        weighted_efficiency = raw_efficiency * weight
 
         scored.append({
             "district_id": district_id,
@@ -178,7 +229,9 @@ def best_outcomes_per_dollar(
             "year": row.get("year", ""),
             "spending_per_student": f"{spending:.0f}",
             "outcome_composite": _fmt(outcome, 4),
-            "efficiency_score": _fmt(efficiency),
+            "raw_efficiency_score": _fmt(raw_efficiency),
+            "recency_weight": _fmt(weight, 4),
+            "efficiency_score": _fmt(weighted_efficiency),
             "poverty_rate": row.get("poverty_rate", ""),
             "median_income": row.get("median_income", ""),
         })
@@ -195,8 +248,16 @@ def spending_effectiveness(
     rows: list[dict[str, str]],
     min_years: int = 3,
     top_n: int = 100,
+    min_spending: float = MIN_SPENDING_PER_STUDENT,
+    max_stale_years: int = DEFAULT_MAX_STALE_YEARS,
 ) -> list[dict[str, str]]:
-    """Rank districts by outcome growth per unit of spending growth (spending elasticity)."""
+    """Rank districts by outcome growth per unit of spending growth (spending elasticity).
+
+    Spending rows below min_spending are excluded to avoid data errors inflating
+    the trend. Districts whose most recent data lags the panel max by more than
+    max_stale_years are excluded so stale elasticity estimates don't dominate.
+    """
+    panel_max = _panel_max_year(rows)
     groups = _group_by_district(rows)
     results: list[dict[str, str]] = []
 
@@ -208,12 +269,21 @@ def spending_effectiveness(
             year = parse_int(row.get("year"))
             spending = parse_number(row.get("spending_per_student"))
             outcome = compute_outcome_composite(row)
-            if year is not None and spending is not None and spending > 0:
+            if year is not None and spending is not None and spending >= min_spending:
                 spending_pairs.append((year, spending))
             if year is not None and outcome is not None:
                 outcome_pairs.append((year, outcome))
 
         if len(spending_pairs) < min_years or len(outcome_pairs) < min_years:
+            continue
+
+        spending_pairs.sort(key=lambda p: p[0])
+        outcome_pairs.sort(key=lambda p: p[0])
+
+        last_spending_year = spending_pairs[-1][0]
+        last_outcome_year = outcome_pairs[-1][0]
+        last_year = max(last_spending_year, last_outcome_year)
+        if panel_max is not None and (panel_max - last_year) > max_stale_years:
             continue
 
         spending_slope = compute_linear_trend(spending_pairs)
@@ -234,6 +304,7 @@ def spending_effectiveness(
             "state": latest.get("state", ""),
             "urbanicity": latest.get("urbanicity", ""),
             "enrollment": latest.get("enrollment", ""),
+            "last_year": str(last_year),
             "spending_slope_per_year": f"{spending_slope:.2f}",
             "outcome_slope_per_year": _fmt(outcome_slope),
             "spending_elasticity": _fmt(elasticity),
@@ -253,9 +324,12 @@ def districts_in_decline(
     rows: list[dict[str, str]],
     min_years: int = 3,
     top_n: int = 100,
+    max_stale_years: int = DEFAULT_MAX_STALE_YEARS,
 ) -> list[dict[str, str]]:
     """Rank districts with the most negative outcome trend (steepest decline first)."""
-    all_scored = most_improved_districts(rows, min_years=min_years, top_n=len(rows), ascending=True)
+    all_scored = most_improved_districts(
+        rows, min_years=min_years, top_n=len(rows), ascending=True, max_stale_years=max_stale_years
+    )
     declining = [r for r in all_scored if float(r["improvement_rate_per_year"]) < 0]
     return declining[:top_n]
 
@@ -267,30 +341,43 @@ def districts_in_decline(
 def infrastructure_gap(
     rows: list[dict[str, str]],
     top_n: int = 100,
+    min_spending: float = MIN_SPENDING_PER_STUDENT,
+    max_stale_years: int = DEFAULT_MAX_STALE_YEARS,
 ) -> list[dict[str, str]]:
-    """Rank districts by capital investment share (lowest first = biggest infrastructure gap)."""
+    """Rank districts by capital investment share (lowest first = biggest infrastructure gap).
+
+    Rows with spending_per_student below min_spending are excluded as likely data
+    errors. Districts whose most recent spending data lags the panel max by more
+    than max_stale_years are excluded so stale snapshots don't dominate.
+    """
+    panel_max = _panel_max_year(rows)
     groups = _group_by_district(rows)
-    qualified: list[dict[str, str]] = []
+    result: list[dict[str, str]] = []
 
     for district_id, district_rows in groups.items():
         q = [
             r for r in district_rows
             if (parse_number(r.get("capital_outlay_pp")) is not None
-                and (parse_number(r.get("spending_per_student")) or 0) > 0)
+                and (parse_number(r.get("spending_per_student")) or 0) >= min_spending)
         ]
         if not q:
             continue
 
         row = max(q, key=lambda r: parse_int(r.get("year")) or 0)
+        data_year = parse_int(row.get("year"))
+
+        if panel_max is not None and data_year is not None and (panel_max - data_year) > max_stale_years:
+            continue
+
         capital_pp = parse_number(row.get("capital_outlay_pp"))
         spending_pp = parse_number(row.get("spending_per_student"))
-        if capital_pp is None or spending_pp is None or spending_pp <= 0:
+        if capital_pp is None or spending_pp is None or spending_pp < min_spending:
             continue
 
         capital_share = capital_pp / spending_pp
         outcome = compute_outcome_composite(row)
 
-        qualified.append({
+        result.append({
             "district_id": district_id,
             "district_name": row.get("district_name", ""),
             "state": row.get("state", ""),
@@ -306,8 +393,8 @@ def infrastructure_gap(
         })
 
     # Sort ascending: lowest capital share = biggest gap
-    qualified.sort(key=lambda r: float(r["capital_share"]))
-    return qualified[:top_n]
+    result.sort(key=lambda r: float(r["capital_share"]))
+    return result[:top_n]
 
 
 # ---------------------------------------------------------------------------
@@ -332,44 +419,88 @@ def _write_report(rows: list[dict[str, str]], output: str, label: str) -> int:
 # CLI entry points (one per report)
 # ---------------------------------------------------------------------------
 
+def _add_stale_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--max-stale-years",
+        type=int,
+        default=DEFAULT_MAX_STALE_YEARS,
+        help=(
+            "Exclude districts whose most recent data lags the panel max year by "
+            "more than this many years (default: %(default)s)."
+        ),
+    )
+
+
+def _add_spending_floor_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--min-spending",
+        type=float,
+        default=MIN_SPENDING_PER_STUDENT,
+        help=(
+            "Minimum plausible spending_per_student; rows below this are treated "
+            "as data errors and excluded (default: %(default)s)."
+        ),
+    )
+
+
 def most_improved_main(argv: list[str] | None = None) -> int:
     parser = _base_parser("Rank school districts by outcome improvement trend.")
     parser.add_argument("--min-years", type=int, default=3, help="Minimum years of outcome data required.")
+    _add_stale_arg(parser)
     args = parser.parse_args(argv)
     rows = read_csv(args.panel)
-    result = most_improved_districts(rows, min_years=args.min_years, top_n=args.top_n)
+    result = most_improved_districts(
+        rows, min_years=args.min_years, top_n=args.top_n, max_stale_years=args.max_stale_years
+    )
     return _write_report(result, args.output, "Most Improved")
 
 
 def best_outcomes_per_dollar_main(argv: list[str] | None = None) -> int:
     parser = _base_parser("Rank districts by outcome composite per $10k of per-pupil spending.")
+    _add_spending_floor_arg(parser)
+    _add_stale_arg(parser)
     args = parser.parse_args(argv)
     rows = read_csv(args.panel)
-    result = best_outcomes_per_dollar(rows, top_n=args.top_n)
+    result = best_outcomes_per_dollar(
+        rows, top_n=args.top_n, min_spending=args.min_spending, max_stale_years=args.max_stale_years
+    )
     return _write_report(result, args.output, "Best Outcomes Per Dollar")
 
 
 def spending_effectiveness_main(argv: list[str] | None = None) -> int:
     parser = _base_parser("Rank districts by outcome improvement per unit of spending growth.")
     parser.add_argument("--min-years", type=int, default=3, help="Minimum years of data required.")
+    _add_spending_floor_arg(parser)
+    _add_stale_arg(parser)
     args = parser.parse_args(argv)
     rows = read_csv(args.panel)
-    result = spending_effectiveness(rows, min_years=args.min_years, top_n=args.top_n)
+    result = spending_effectiveness(
+        rows,
+        min_years=args.min_years,
+        top_n=args.top_n,
+        min_spending=args.min_spending,
+        max_stale_years=args.max_stale_years,
+    )
     return _write_report(result, args.output, "Spending Effectiveness")
 
 
 def districts_in_decline_main(argv: list[str] | None = None) -> int:
     parser = _base_parser("Rank districts with the steepest decline in outcomes.")
     parser.add_argument("--min-years", type=int, default=3, help="Minimum years of outcome data required.")
+    _add_stale_arg(parser)
     args = parser.parse_args(argv)
     rows = read_csv(args.panel)
-    result = districts_in_decline(rows, min_years=args.min_years, top_n=args.top_n)
+    result = districts_in_decline(rows, min_years=args.min_years, top_n=args.top_n, max_stale_years=args.max_stale_years)
     return _write_report(result, args.output, "Districts in Decline")
 
 
 def infrastructure_gap_main(argv: list[str] | None = None) -> int:
     parser = _base_parser("Rank districts with the lowest capital investment share.")
+    _add_spending_floor_arg(parser)
+    _add_stale_arg(parser)
     args = parser.parse_args(argv)
     rows = read_csv(args.panel)
-    result = infrastructure_gap(rows, top_n=args.top_n)
+    result = infrastructure_gap(
+        rows, top_n=args.top_n, min_spending=args.min_spending, max_stale_years=args.max_stale_years
+    )
     return _write_report(result, args.output, "Infrastructure Gap")
