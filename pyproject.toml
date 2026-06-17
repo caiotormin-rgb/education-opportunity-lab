@@ -24,5 +24,14 @@ eol-report-spending-effectiveness = "education_opportunity_lab.reports:spending_
 eol-report-in-decline = "education_opportunity_lab.reports:districts_in_decline_main"
 eol-report-infrastructure-gap = "education_opportunity_lab.reports:infrastructure_gap_main"
 
+[project.optional-dependencies]
+notebooks = [
+    "jupyter",
+    "pandas",
+    "numpy",
+    "matplotlib",
+    "ipykernel",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]

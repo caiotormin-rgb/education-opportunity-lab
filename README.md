@@ -97,6 +97,30 @@ eol-validate-panel data/processed/district_year_panel.csv
 
 ---
 
+## Notebooks
+
+The `notebooks/` directory contains exploratory analyses. They require extra dependencies not needed by the pipeline itself.
+
+**Set up a conda environment:**
+
+```bash
+conda create -n eol python=3.11 -y
+conda activate eol
+conda install -y jupyter pandas numpy matplotlib ipykernel
+pip install -e .
+python -m ipykernel install --user --name eol --display-name "Education Opportunity Lab"
+```
+
+Or install the optional notebook extras directly into any Python environment:
+
+```bash
+pip install -e ".[notebooks]"
+```
+
+Then open JupyterLab/Notebook and select the **"Education Opportunity Lab"** kernel.
+
+---
+
 ## Fetching Real Data
 
 Each source has a dedicated extractor. Run them independently; their outputs drop into a shared interim directory for `build_panel`.
