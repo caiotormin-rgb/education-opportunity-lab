@@ -1,0 +1,5 @@
+district_id,year,suspension_rate,chronic_absenteeism_rate,ap_participation_rate,gifted_participation_rate
+0100001,2022,0.061,0.178,0.143,0.049
+0100001,2023,0.055,0.164,0.151,0.052
+2500001,2022,0.082,0.291,0.098,0.031
+2500001,2023,0.074,0.276,0.104,0.033

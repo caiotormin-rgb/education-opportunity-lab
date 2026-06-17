@@ -1,0 +1,5 @@
+district_id,year,math_proficiency_rate,reading_proficiency_rate,graduation_rate,attendance_rate,dropout_rate,college_enrollment_rate
+0100001,2022,0.421,0.458,0.889,0.918,0.018,0.612
+0100001,2023,0.439,0.471,0.896,0.924,0.016,0.621
+2500001,2022,0.318,0.351,0.782,0.861,0.041,0.548
+2500001,2023,0.337,0.369,0.793,0.873,0.038,0.557

@@ -1,0 +1,5 @@
+district_id,year,special_education_enrollment,idea_part_b_enrollment,special_education_teachers,special_education_expenditure,inclusion_80pct_rate,separate_setting_rate
+0100001,2022,1260,1185,72,15120000,0.684,0.041
+0100001,2023,1320,1244,75,16104000,0.692,0.039
+2500001,2022,4200,3975,210,67200000,0.572,0.087
+2500001,2023,4315,4098,218,71197500,0.581,0.083

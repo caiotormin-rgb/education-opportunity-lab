@@ -1,0 +1,5 @@
+district_id,year,median_income,poverty_rate,adult_ba_plus_rate,single_parent_household_rate,unemployment_rate,housing_cost_burden_rate,foreign_born_rate
+0100001,2022,65200,0.135,0.285,0.238,0.042,0.271,0.035
+0100001,2023,67400,0.128,0.292,0.232,0.039,0.268,0.037
+2500001,2022,48100,0.264,0.247,0.401,0.071,0.386,0.128
+2500001,2023,50200,0.252,0.255,0.392,0.065,0.379,0.132

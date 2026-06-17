@@ -1,0 +1,5 @@
+district_id,year,state,district_name,county_fips,urbanicity,enrollment,school_count,teacher_count
+0100001,2022,AL,Autauga County,01001,Town,9000,14,540
+0100001,2023,AL,Autauga County,01001,Town,9250,14,552
+2500001,2022,MA,Springfield,25013,City,24000,55,1680
+2500001,2023,MA,Springfield,25013,City,24250,55,1695

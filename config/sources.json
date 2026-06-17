@@ -1,0 +1,63 @@
+{
+  "unit_of_analysis": ["district_id", "year"],
+  "sources": [
+    {
+      "name": "nces_ccd",
+      "normalized_file": "ccd.csv",
+      "required": true,
+      "grain": ["district_id", "year"],
+      "role": "Backbone district-year table with identifiers, enrollment, school counts, staffing, and district descriptors."
+    },
+    {
+      "name": "nces_f33",
+      "normalized_file": "f33.csv",
+      "required": false,
+      "grain": ["district_id", "year"],
+      "role": "District finance table used for revenue, expenditure, debt, and per-pupil derived measures."
+    },
+    {
+      "name": "acs_saipe",
+      "normalized_file": "acs.csv",
+      "required": false,
+      "grain": ["district_id", "year"],
+      "role": "District-level demographic and economic controls."
+    },
+    {
+      "name": "crdc",
+      "normalized_file": "crdc.csv",
+      "required": false,
+      "grain": ["district_id", "year"],
+      "role": "Civil rights, discipline, access, and equity indicators."
+    },
+    {
+      "name": "special_education",
+      "normalized_file": "special_education.csv",
+      "required": false,
+      "grain": ["district_id", "year"],
+      "role": "Special education enrollment, IDEA participation, staffing, services, inclusion, and spending measures when available."
+    },
+    {
+      "name": "edfacts_outcomes",
+      "normalized_file": "outcomes.csv",
+      "required": false,
+      "grain": ["district_id", "year"],
+      "role": "Academic and student outcome measures such as proficiency, graduation, attendance, dropout, and postsecondary transition rates."
+    },
+    {
+      "name": "crime",
+      "normalized_file": "crime.csv",
+      "required": false,
+      "grain": ["county_fips", "year"],
+      "join_from_backbone": ["county_fips", "year"],
+      "role": "County-level public safety context."
+    },
+    {
+      "name": "policy_events",
+      "normalized_file": "policy_events.csv",
+      "required": false,
+      "grain": ["state", "policy_type", "event_year"],
+      "join_from_backbone": ["state", "year"],
+      "role": "State policy events converted into active treatment flags."
+    }
+  ]
+}
