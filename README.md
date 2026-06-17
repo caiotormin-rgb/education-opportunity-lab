@@ -44,8 +44,13 @@ scripts/
   fetch_census_district_data.py  SAIPE + ACS demographics via Census Bureau API
   fetch_crdc_data.py       CRDC discipline and access via Urban Institute API
   normalize_crime_data.py  FBI UCR agency files → county-year crime rates
-  fetch_edfacts_data.py    EDFacts proficiency and graduation via Urban Institute API
-  build_event_study.py     Event-study panel builder with relative-time columns
+  fetch_edfacts_data.py             EDFacts proficiency, graduation, dropout, attendance
+  build_event_study.py              Event-study panel builder with relative-time columns
+  report_most_improved.py           Most Improved School Districts
+  report_best_outcomes_per_dollar.py Best Outcomes Per Dollar
+  report_spending_effectiveness.py  Where Spending Works Best
+  report_districts_in_decline.py    Districts in Decline
+  report_infrastructure_gap.py      Infrastructure Gap Report
 src/education_opportunity_lab/
   pipeline.py              Join and feature engineering logic
   schema.py                Schema validation helpers
@@ -53,12 +58,14 @@ src/education_opportunity_lab/
   census_api.py            Census Bureau SAIPE and ACS 5-year client
   crdc_api.py              CRDC discipline, access, and absenteeism client
   crime_normalizer.py      FBI UCR file-based county crime normalizer
-  edfacts_api.py           EDFacts assessment and graduation rate client
+  edfacts_api.py           EDFacts assessment, graduation, dropout, and attendance client
   event_study.py           Relative-time, demeaning, and event-study panel helpers
+  reports.py               Analytical report functions (OLS trend, efficiency, gap scoring)
   cli.py                   Installed CLI entry points
 tests/
   test_pipeline.py         Join, derived-field, and policy flag tests
   test_sources.py          Per-source normalizer and rate computation tests
+  test_reports.py          Analytical scoring and report output tests
 ```
 
 ---
@@ -209,14 +216,49 @@ The current schema covers ~80 fields across six domains:
 
 ---
 
+## Phase 4 Reports
+
+Five analytical reports produce ranked district lists from any built panel:
+
+```bash
+# America's Most Improved School Districts
+eol-report-most-improved \
+  --panel data/processed/district_year_panel.csv \
+  --output data/processed/report_most_improved.csv
+
+# Districts Delivering the Best Outcomes Per Dollar
+eol-report-best-per-dollar \
+  --panel data/processed/district_year_panel.csv \
+  --output data/processed/report_best_per_dollar.csv
+
+# Where Education Spending Works Best
+eol-report-spending-effectiveness \
+  --panel data/processed/district_year_panel.csv \
+  --output data/processed/report_spending_effectiveness.csv
+
+# Districts in Decline
+eol-report-in-decline \
+  --panel data/processed/district_year_panel.csv \
+  --output data/processed/report_in_decline.csv
+
+# The Infrastructure Gap Report
+eol-report-infrastructure-gap \
+  --panel data/processed/district_year_panel.csv \
+  --output data/processed/report_infrastructure_gap.csv
+```
+
+Each report accepts `--top-n` (default 100) and `--min-years` where applicable.
+
+---
+
 ## Roadmap
 
 | Phase | Status | Goal |
 | ----- | ------ | ---- |
 | 1 | Complete | Stable district-year schema, join pipeline, validation, sample data |
 | 2 | Complete | Source extractors for CCD, F-33, CRDC, ACS/SAIPE, crime |
-| 3 | In progress | EDFacts outcomes, graduation rate extractors, event-study panel builder |
-| 4 | Planned | Annual reports — Most Improved, Best Outcomes Per Dollar, Infrastructure Gap |
+| 3 | Complete | EDFacts outcomes, dropout/attendance, event-study panel builder |
+| 4 | Complete | Analytical reports — Most Improved, Best Per Dollar, Spending Effectiveness, Decline, Infrastructure Gap |
 
 See [docs/roadmap.md](docs/roadmap.md) for details.
 

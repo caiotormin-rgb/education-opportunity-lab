@@ -20,6 +20,12 @@ ASSESSMENT_START_YEAR = 2009
 # 4-year adjusted cohort graduation rate became federal requirement for 2011
 GRAD_START_YEAR = 2011
 
+# Dropout rate reporting began in EDFacts around 2011
+DROPOUT_START_YEAR = 2011
+
+# Chronic absenteeism added to ESSA state report cards starting 2017-18
+ABSENTEEISM_START_YEAR = 2018
+
 OUTCOME_COLUMNS = (
     "district_id",
     "year",
@@ -80,6 +86,85 @@ def fetch_grad_rates_year(
     )
 
 
+def fetch_dropout_rates_year(
+    year: int,
+    delay: float,
+    timeout: int,
+    fail_fast: bool,
+    failures: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    return fetch_endpoint(
+        f"/school-districts/edfacts/dropout-rates/{year}/",
+        delay,
+        timeout,
+        fail_fast,
+        failures,
+    )
+
+
+def fetch_absenteeism_year(
+    year: int,
+    delay: float,
+    timeout: int,
+    fail_fast: bool,
+    failures: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    return fetch_endpoint(
+        f"/school-districts/edfacts/chronic-absenteeism/{year}/",
+        delay,
+        timeout,
+        fail_fast,
+        failures,
+    )
+
+
+def normalize_dropout_row(row: dict[str, Any]) -> dict[str, str] | None:
+    leaid = clean_text(row.get("leaid"))
+    year = clean_text(row.get("year"))
+    if not leaid or not year:
+        return None
+
+    dropout_raw = clean_number(
+        row.get("dropout_rate")
+        or row.get("dropout_rate_midpt")
+        or row.get("event_dropout_rate")
+        or row.get("leaver_dropout_rate")
+    )
+    return {
+        "district_id": leaid,
+        "year": year,
+        "dropout_rate": _pct_to_rate(dropout_raw),
+    }
+
+
+def normalize_absenteeism_row(row: dict[str, Any]) -> dict[str, str] | None:
+    leaid = clean_text(row.get("leaid"))
+    year = clean_text(row.get("year"))
+    if not leaid or not year:
+        return None
+
+    absent_raw = clean_number(
+        row.get("chronic_absenteeism_rate")
+        or row.get("pct_chronically_absent")
+        or row.get("chron_absent_rate")
+        or row.get("ca_pct_midpt")
+    )
+    # attendance_rate approximated as 1 - chronic_absenteeism_rate
+    absent_rate = _pct_to_rate(absent_raw)
+    attendance_rate = ""
+    if absent_rate:
+        try:
+            attendance_rate = f"{1.0 - float(absent_rate):.6f}"
+        except ValueError:
+            pass
+
+    return {
+        "district_id": leaid,
+        "year": year,
+        "attendance_rate": attendance_rate,
+    }
+
+
 def normalize_assessment_row(row: dict[str, Any]) -> dict[str, str] | None:
     leaid = clean_text(row.get("leaid"))
     year = clean_text(row.get("year"))
@@ -130,22 +215,25 @@ def normalize_grad_row(row: dict[str, Any]) -> dict[str, str] | None:
 def merge_outcomes(
     assessment_rows: list[dict[str, str]],
     grad_rows: list[dict[str, str]],
+    dropout_rows: list[dict[str, str]] | None = None,
+    absenteeism_rows: list[dict[str, str]] | None = None,
 ) -> list[dict[str, str]]:
-    """Left-join grad rates onto assessments by district_id+year; fill remaining outcome columns."""
+    """Left-join grad, dropout, and absenteeism onto assessments by district_id+year."""
     grad_index = {(r["district_id"], r["year"]): r for r in grad_rows}
+    dropout_index = {(r["district_id"], r["year"]): r for r in (dropout_rows or [])}
+    absent_index = {(r["district_id"], r["year"]): r for r in (absenteeism_rows or [])}
 
     result: list[dict[str, str]] = []
     for assess in assessment_rows:
         key = (assess["district_id"], assess["year"])
-        grad = grad_index.get(key, {})
         row: dict[str, str] = {
             "district_id": assess["district_id"],
             "year": assess["year"],
             "math_proficiency_rate": assess.get("math_proficiency_rate", ""),
             "reading_proficiency_rate": assess.get("reading_proficiency_rate", ""),
-            "graduation_rate": grad.get("graduation_rate", ""),
-            "attendance_rate": "",
-            "dropout_rate": "",
+            "graduation_rate": grad_index.get(key, {}).get("graduation_rate", ""),
+            "attendance_rate": absent_index.get(key, {}).get("attendance_rate", ""),
+            "dropout_rate": dropout_index.get(key, {}).get("dropout_rate", ""),
             "college_enrollment_rate": "",
         }
         result.append(row)
@@ -172,6 +260,8 @@ def fetch_edfacts_data(
 
     eff_start_assess = max(start_year, ASSESSMENT_START_YEAR)
     eff_start_grad = max(start_year, GRAD_START_YEAR)
+    eff_start_dropout = max(start_year, DROPOUT_START_YEAR)
+    eff_start_absent = max(start_year, ABSENTEEISM_START_YEAR)
 
     for year in range(start_year, end_year + 1):
         year_path = by_year_path / f"outcomes_{year}.csv"
@@ -195,10 +285,23 @@ def fetch_edfacts_data(
             raw = fetch_grad_rates_year(year, delay, timeout, fail_fast, failures)
             grad_rows = [r for raw_row in raw if (r := normalize_grad_row(raw_row)) is not None]
 
+        dropout_rows: list[dict[str, str]] = []
+        if year >= eff_start_dropout:
+            print(f"Fetching {year} EDFacts dropout rates...", flush=True)
+            raw = fetch_dropout_rates_year(year, delay, timeout, fail_fast, failures)
+            dropout_rows = [r for raw_row in raw if (r := normalize_dropout_row(raw_row)) is not None]
+
+        absenteeism_rows: list[dict[str, str]] = []
+        if year >= eff_start_absent:
+            print(f"Fetching {year} EDFacts chronic absenteeism...", flush=True)
+            raw = fetch_absenteeism_year(year, delay, timeout, fail_fast, failures)
+            absenteeism_rows = [r for raw_row in raw if (r := normalize_absenteeism_row(raw_row)) is not None]
+
         if assessment_rows:
-            year_rows = merge_outcomes(assessment_rows, grad_rows)
+            year_rows = merge_outcomes(assessment_rows, grad_rows, dropout_rows, absenteeism_rows)
         elif grad_rows:
-            # Grad data with no assessment data for this year
+            dropout_index = {(r["district_id"], r["year"]): r for r in dropout_rows}
+            absent_index = {(r["district_id"], r["year"]): r for r in absenteeism_rows}
             year_rows = [
                 {
                     "district_id": r["district_id"],
@@ -206,8 +309,8 @@ def fetch_edfacts_data(
                     "math_proficiency_rate": "",
                     "reading_proficiency_rate": "",
                     "graduation_rate": r["graduation_rate"],
-                    "attendance_rate": "",
-                    "dropout_rate": "",
+                    "attendance_rate": absent_index.get((r["district_id"], r["year"]), {}).get("attendance_rate", ""),
+                    "dropout_rate": dropout_index.get((r["district_id"], r["year"]), {}).get("dropout_rate", ""),
                     "college_enrollment_rate": "",
                 }
                 for r in grad_rows
