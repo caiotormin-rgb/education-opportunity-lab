@@ -39,15 +39,26 @@ samples/
   *.csv                    Tiny normalized inputs for local development and tests
 scripts/
   build_panel.py           CLI entry point for panel construction
-  fetch_urban_district_data.py   Pulls real data from the Urban Institute API
   validate_panel.py        CLI entry point for schema validation
+  fetch_urban_district_data.py   CCD, F-33, special education via Urban Institute API
+  fetch_census_district_data.py  SAIPE + ACS demographics via Census Bureau API
+  fetch_crdc_data.py       CRDC discipline and access via Urban Institute API
+  normalize_crime_data.py  FBI UCR agency files → county-year crime rates
+  fetch_edfacts_data.py    EDFacts proficiency and graduation via Urban Institute API
+  build_event_study.py     Event-study panel builder with relative-time columns
 src/education_opportunity_lab/
   pipeline.py              Join and feature engineering logic
   schema.py                Schema validation helpers
   urban_api.py             Urban Institute Education Data Portal client
+  census_api.py            Census Bureau SAIPE and ACS 5-year client
+  crdc_api.py              CRDC discipline, access, and absenteeism client
+  crime_normalizer.py      FBI UCR file-based county crime normalizer
+  edfacts_api.py           EDFacts assessment and graduation rate client
+  event_study.py           Relative-time, demeaning, and event-study panel helpers
   cli.py                   Installed CLI entry points
 tests/
-  test_pipeline.py         Unit tests for joins, derived fields, and policy flags
+  test_pipeline.py         Join, derived-field, and policy flag tests
+  test_sources.py          Per-source normalizer and rate computation tests
 ```
 
 ---
@@ -79,35 +90,89 @@ eol-validate-panel data/processed/district_year_panel.csv
 
 ---
 
-## Fetching Real Data (Urban Institute API)
+## Fetching Real Data
 
-The first real-data loader pulls district-level CCD directory and F-33 finance data from the [Urban Institute Education Data Portal](https://educationdata.urban.org/).
+Each source has a dedicated extractor. Run them independently; their outputs drop into a shared interim directory for `build_panel`.
+
+### CCD, F-33, Special Education — Urban Institute API
 
 ```bash
-# Fetch district data for 2020–2022
-python3 scripts/fetch_urban_district_data.py --years 2020:2022 --output-dir data/interim/urban
+eol-fetch-urban --years 2015:2022 --output-dir data/interim/urban
+```
 
-# Build the panel from the fetched data
-python3 scripts/build_panel.py --input-dir data/interim/urban --output data/processed/district_year_panel_urban.csv
+### Demographics — Census SAIPE + ACS 5-year
 
-# Validate
-python3 scripts/validate_panel.py data/processed/district_year_panel_urban.csv
+No API key required. Fetches poverty rate, median income, education attainment, employment, housing burden, single-parent rate, and foreign-born share for every school district.
+
+```bash
+eol-fetch-census --years 2015:2022 --output-dir data/interim/census
+```
+
+### CRDC Discipline and Access — Urban Institute API
+
+CRDC is biennial (2012, 2014, 2016, 2018, 2021). Produces suspension rates, AP/gifted participation, and chronic absenteeism rates at the district level.
+
+```bash
+eol-fetch-crdc --output-dir data/interim/crdc
+```
+
+### County Crime — FBI UCR Files
+
+Download the UCR Agencies and Offenses CSV files from [FBI Crime Data Explorer](https://cde.fbi.gov/downloads), then normalize them to county-year crime rates.
+
+```bash
+eol-normalize-crime \
+  --agencies data/raw/ucr_agencies_2022.csv \
+  --offenses data/raw/ucr_offenses_2022.csv \
+  --output data/interim/crime/crime.csv
+```
+
+### Outcomes — Urban Institute EDFacts API
+
+Fetches math/reading proficiency midpoints and graduation rates from the EDFacts reporting system.
+
+```bash
+eol-fetch-edfacts --years 2012:2022 --output-dir data/interim/edfacts
+```
+
+### Build the Panel
+
+Merge all normalized sources into a single district-year panel:
+
+```bash
+# Combine interim directories (copy or symlink the CSVs into one directory)
+eol-build-panel --input-dir data/interim/combined --output data/processed/district_year_panel.csv
+eol-validate-panel data/processed/district_year_panel.csv
+```
+
+### Build an Event-Study Panel (Phase 3)
+
+Filters the panel to a treatment window around a state policy event, adds relative-time columns, and optionally adds within-district demeaned versions of all numeric columns.
+
+```bash
+eol-build-event-study \
+  --panel data/processed/district_year_panel.csv \
+  --events samples/policy_events.csv \
+  --policy-type funding_reform \
+  --window -5:5 \
+  --demean \
+  --output data/processed/event_study_funding_reform.csv
 ```
 
 ---
 
 ## Data Sources
 
-| Source | Description | Join Key |
-| ------ | ----------- | -------- |
-| **CCD** (backbone) | District directory, enrollment, staffing | `district_id, year` |
-| **F-33** | District finance — revenue, expenditure | `district_id, year` |
-| **ACS / SAIPE** | Demographics, income, poverty | `district_id, year` |
-| **CRDC** | Discipline, equity, access indicators | `district_id, year` |
-| **Special Education** | IDEA enrollment, spending, placement rates | `district_id, year` |
-| **Outcomes** | Proficiency, graduation, attendance, dropout | `district_id, year` |
-| **Crime** | County violent and property crime rates | `county_fips, year` |
-| **Policy Events** | Finance reform, teacher pay, school choice flags | `state, year` |
+| Source | Extractor | Description | Join Key |
+| ------ | --------- | ----------- | -------- |
+| **CCD** (backbone) | `eol-fetch-urban` | District directory, enrollment, staffing | `district_id, year` |
+| **F-33** | `eol-fetch-urban` | District finance — revenue, expenditure | `district_id, year` |
+| **SAIPE + ACS** | `eol-fetch-census` | Demographics, income, poverty, attainment | `district_id, year` |
+| **CRDC** | `eol-fetch-crdc` | Discipline, equity, access (biennial) | `district_id, year` |
+| **Special Education** | `eol-fetch-urban` | IDEA enrollment, spending, placement | `district_id, year` |
+| **EDFacts** | `eol-fetch-edfacts` | Proficiency, graduation rates | `district_id, year` |
+| **Crime** | `eol-normalize-crime` | County violent and property crime rates | `county_fips, year` |
+| **Policy Events** | Manual / `samples/` | Finance reform, teacher pay, school choice | `state, year` |
 
 See [docs/data_dictionary.md](docs/data_dictionary.md) for field-level documentation across all ~80 columns.
 
@@ -149,8 +214,8 @@ The current schema covers ~80 fields across six domains:
 | Phase | Status | Goal |
 | ----- | ------ | ---- |
 | 1 | Complete | Stable district-year schema, join pipeline, validation, sample data |
-| 2 | In progress | Source extractors for CCD, F-33, CRDC, ACS/SAIPE, crime |
-| 3 | Planned | EDFacts outcomes, graduation/attendance extractors, event-study outputs |
+| 2 | Complete | Source extractors for CCD, F-33, CRDC, ACS/SAIPE, crime |
+| 3 | In progress | EDFacts outcomes, graduation rate extractors, event-study panel builder |
 | 4 | Planned | Annual reports — Most Improved, Best Outcomes Per Dollar, Infrastructure Gap |
 
 See [docs/roadmap.md](docs/roadmap.md) for details.

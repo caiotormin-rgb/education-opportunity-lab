@@ -105,5 +105,21 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(f33["idea_part_b_revenue"], "991000")
 
 
+    def test_build_panel_with_crdc_present(self) -> None:
+        result = build_panel(REPO_ROOT / "samples")
+        rows = {(row["district_id"], row["year"]): row for row in result.rows}
+        autauga_2023 = rows[("0100001", "2023")]
+        self.assertIn("suspension_rate", autauga_2023)
+        self.assertNotEqual(autauga_2023.get("suspension_rate", ""), "")
+
+    def test_build_panel_acs_columns_joined(self) -> None:
+        result = build_panel(REPO_ROOT / "samples")
+        rows = {(row["district_id"], row["year"]): row for row in result.rows}
+        autauga_2023 = rows[("0100001", "2023")]
+        self.assertIn("median_income", autauga_2023)
+        self.assertIn("poverty_rate", autauga_2023)
+        self.assertNotEqual(autauga_2023.get("median_income", ""), "")
+
+
 if __name__ == "__main__":
     unittest.main()

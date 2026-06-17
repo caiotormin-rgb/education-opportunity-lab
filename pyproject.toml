@@ -12,6 +12,12 @@ dependencies = []
 [project.scripts]
 eol-build-panel = "education_opportunity_lab.cli:build_panel_main"
 eol-validate-panel = "education_opportunity_lab.cli:validate_panel_main"
+eol-fetch-urban = "education_opportunity_lab.urban_api:main"
+eol-fetch-census = "education_opportunity_lab.census_api:main"
+eol-fetch-crdc = "education_opportunity_lab.crdc_api:main"
+eol-normalize-crime = "education_opportunity_lab.crime_normalizer:main"
+eol-fetch-edfacts = "education_opportunity_lab.edfacts_api:main"
+eol-build-event-study = "education_opportunity_lab.event_study:build_event_study_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
