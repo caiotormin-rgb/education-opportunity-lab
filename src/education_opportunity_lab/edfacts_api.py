@@ -54,6 +54,9 @@ def _pct_to_rate(value: str) -> str:
         return ""
 
 
+_ALL_STUDENTS = "race=99&disability=99&econ_disadvantaged=99&lep=99&foster_care=99&homeless=99"
+
+
 def fetch_assessments_year(
     year: int,
     delay: float,
@@ -62,7 +65,7 @@ def fetch_assessments_year(
     failures: list[dict[str, str]],
 ) -> list[dict[str, Any]]:
     return fetch_endpoint(
-        f"/school-districts/edfacts/assessments/{year}/",
+        f"/school-districts/edfacts/assessments/{year}/?{_ALL_STUDENTS}",
         delay,
         timeout,
         fail_fast,
@@ -78,7 +81,7 @@ def fetch_grad_rates_year(
     failures: list[dict[str, str]],
 ) -> list[dict[str, Any]]:
     return fetch_endpoint(
-        f"/school-districts/edfacts/grad-rates/{year}/",
+        f"/school-districts/edfacts/grad-rates/{year}/?{_ALL_STUDENTS}",
         delay,
         timeout,
         fail_fast,
@@ -94,7 +97,7 @@ def fetch_dropout_rates_year(
     failures: list[dict[str, str]],
 ) -> list[dict[str, Any]]:
     return fetch_endpoint(
-        f"/school-districts/edfacts/dropout-rates/{year}/",
+        f"/school-districts/edfacts/dropout-rates/{year}/?{_ALL_STUDENTS}",
         delay,
         timeout,
         fail_fast,
@@ -110,7 +113,7 @@ def fetch_absenteeism_year(
     failures: list[dict[str, str]],
 ) -> list[dict[str, Any]]:
     return fetch_endpoint(
-        f"/school-districts/edfacts/chronic-absenteeism/{year}/",
+        f"/school-districts/edfacts/chronic-absenteeism/{year}/?{_ALL_STUDENTS}",
         delay,
         timeout,
         fail_fast,
@@ -318,15 +321,15 @@ def fetch_edfacts_data(
         else:
             year_rows = []
 
-        write_csv(year_rows, year_path)
+        write_csv(year_path, year_rows)
         all_rows.extend(year_rows)
         counts[f"outcomes_{year}"] = len(year_rows)
         print(f"Finished {year}: {len(year_rows)} districts", flush=True)
 
-    write_csv(all_rows, output_path / "outcomes.csv")
+    write_csv(output_path / "outcomes.csv", all_rows)
 
     if failures:
-        write_csv(failures, output_path / "fetch_failures.csv")
+        write_csv(output_path / "fetch_failures.csv", failures)
     return counts
 
 
